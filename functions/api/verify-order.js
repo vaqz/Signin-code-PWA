@@ -26,11 +26,6 @@ export async function onRequestPost(context) {
     return json({ ok: false, verified: false, message: "Invalid request." }, 400);
   }
 
-  // Redeem path: exchange a short-lived token for the code (server-side only)
-  if (body.action === "redeem" && body.token) {
-    return redeemToken(body.token);
-  }
-
   const salesId = String(body.salesId || "").trim().toUpperCase();
 
   if (!salesId || salesId.length > 64) {
@@ -43,7 +38,7 @@ export async function onRequestPost(context) {
       headers: { "Content-Type": "text/plain;charset=UTF-8" },
       body: JSON.stringify({ salesId }),
       redirect: "follow",
-      signal: AbortSignal.timeout(12000)
+      signal: AbortSignal.timeout(15000)
     });
 
     if (!upstream.ok) {
@@ -55,56 +50,19 @@ export async function onRequestPost(context) {
       return json({ ok: false, verified: false, message: "Verification is temporarily unavailable." }, 502);
     }
 
-    // Pass the opaque token through if present. Never expose emails.
     const response = {
       ok: result.ok === true,
       verified: result.verified,
-      message: result.verified
-        ? "Your order has been found."
-        : "We couldn't find that Sales ID. Check it and try again."
+      message: result.message || (result.verified ? "Your order has been found." : "We couldn't find that Sales ID. Check it and try again.")
     };
 
-    if (result.verified && typeof result.token === "string" && result.token.length > 0) {
-      response.token = result.token;
+    if (result.verified && result.code && /^\d{4,8}$/.test(result.code)) {
+      response.code = result.code;
     }
 
     return json(response, 200);
   } catch {
     return json({ ok: false, verified: false, message: "Verification is temporarily unavailable." }, 502);
-  }
-}
-
-async function redeemToken(token) {
-  const cleanToken = String(token || "").trim();
-  if (!cleanToken || cleanToken.length > 512) {
-    return json({ ok: false, verified: false, message: "Invalid or expired session. Please verify your Sales ID again." }, 400);
-  }
-
-  try {
-    const upstream = await fetch(APPS_SCRIPT_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: JSON.stringify({ action: "redeem", token: cleanToken }),
-      redirect: "follow",
-      signal: AbortSignal.timeout(12000)
-    });
-
-    if (!upstream.ok) {
-      return json({ ok: false, verified: false, message: "Code retrieval is temporarily unavailable." }, 502);
-    }
-
-    const result = await upstream.json();
-
-    // Only ever return the code (or null) and a safe message.
-    // Never forward emails or other data.
-    return json({
-      ok: result.ok === true,
-      verified: result.verified === true,
-      code: typeof result.code === "string" && /^\d{4,8}$/.test(result.code) ? result.code : null,
-      message: result.message || (result.code ? "Code retrieved." : "No recent code found. Please request a new code and try again.")
-    }, 200);
-  } catch {
-    return json({ ok: false, verified: false, message: "Code retrieval is temporarily unavailable." }, 502);
   }
 }
 
