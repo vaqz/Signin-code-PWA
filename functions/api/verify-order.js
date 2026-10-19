@@ -27,14 +27,9 @@ export async function onRequestPost(context) {
   }
 
   const salesId = String(body.salesId || "").trim().toUpperCase();
-  const email = String(body.email || "").trim().toLowerCase();
 
-  if (
-    !salesId || salesId.length > 64 ||
-    !email || email.length > 254 ||
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-  ) {
-    return json({ ok: false, verified: false, message: "Enter a valid Sales ID and email address." }, 400);
+  if (!salesId || salesId.length > 64) {
+    return json({ ok: false, verified: false, message: "Enter a valid Sales ID." }, 400);
   }
 
   try {
@@ -43,7 +38,7 @@ export async function onRequestPost(context) {
     const upstream = await fetch(APPS_SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: JSON.stringify({ salesId, email }),
+      body: JSON.stringify({ salesId }),
       redirect: "follow",
       signal: AbortSignal.timeout(12000)
     });
@@ -61,8 +56,8 @@ export async function onRequestPost(context) {
       ok: result.ok === true,
       verified: result.verified,
       message: result.verified
-        ? "Your order details have been verified."
-        : "We couldn't verify those details. Check them and try again."
+        ? "Your order has been found."
+        : "We couldn't find that Sales ID. Check it and try again."
     }, 200);
   } catch {
     return json({ ok: false, verified: false, message: "Verification is temporarily unavailable." }, 502);
