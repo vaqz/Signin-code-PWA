@@ -141,30 +141,15 @@
           return;
         }
 
-        // Sales ID found — try to retrieve the code using the opaque token
-        if (result.token) {
-          submitButton.textContent = "Retrieving code…";
-          const redeemResponse = await fetch("/api/verify-order", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            cache: "no-store",
-            body: JSON.stringify({ action: "redeem", token: result.token })
-          });
-          const redeemResult = await redeemResponse.json();
-
-          if (redeemResult && redeemResult.code) {
-            showCode(redeemResult.code);
-            return;
-          }
-
-          // Token was valid but no code is available yet
-          showStatus(
-            redeemResult?.message || "Order verified. No recent sign-in code found. Please request a new code from the service and try again.",
-            "info"
-          );
-        } else {
-          showStatus("Your order has been found. Code retrieval is being prepared.", "info");
+        if (result.code) {
+          showCode(result.code);
+          return;
         }
+
+        showStatus(
+          result.message || "Order verified. No recent sign-in code found. Please request a new code from the service and try again.",
+          "info"
+        );
       } catch {
         showStatus("Verification is temporarily unavailable. Please try again shortly.", "error");
       } finally {
