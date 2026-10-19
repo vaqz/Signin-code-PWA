@@ -27,11 +27,19 @@
     input::placeholder{color:#68778b}
     button{width:100%;min-height:53px;border:0;border-radius:13px;margin-top:14px;background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:800;cursor:pointer}
     button:focus-visible{outline:3px solid white;outline-offset:3px}
+    button:disabled{opacity:.6;cursor:not-allowed}
     .hint{font-size:13px;color:var(--muted);margin:10px 0 0}
     .notice{margin-top:18px;padding:14px;border-radius:13px;background:#202a38;border:1px solid #354257;color:#c6d0de;font-size:13px}
     .notice strong{display:block;color:var(--text);font-size:14px;margin-bottom:3px}
     .status{display:none;margin-top:16px;padding:13px 14px;border-radius:12px;font-size:14px;overflow-wrap:anywhere}
     .status.show{display:block}.status.error{background:#351d24;color:#ffd8d3;border:1px solid #70404a}.status.info{background:#172b22;color:#d6ffe1;border:1px solid #315d42}
+    .code-box{display:none;margin-top:18px;padding:18px;border-radius:14px;background:#0f1a14;border:1px solid #2a4a38;text-align:center}
+    .code-box.show{display:block}
+    .code-label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;font-weight:700;margin-bottom:8px}
+    .code-value{font-size:clamp(28px,8vw,36px);font-weight:800;letter-spacing:6px;font-variant-numeric:tabular-nums;color:var(--accent)}
+    .code-actions{margin-top:14px;display:flex;gap:10px}
+    .code-actions button{margin-top:0;flex:1;min-height:46px;font-size:14px}
+    .secondary{background:#22324a;color:#e6eef9}
     footer{padding:18px 20px calc(20px + env(safe-area-inset-bottom));text-align:center;color:#778599;font-size:12px}
     .foot-inner{max-width:520px;margin:auto}
     @media(min-width:600px){.panel{padding:28px}header{padding-top:26px}}
@@ -48,7 +56,7 @@
   <main>
     <div class="eyebrow">Order assistance</div>
     <h1>Sign-in Code</h1>
-    <p class="intro">Enter the Sales ID from your purchase confirmation to verify your order.</p>
+    <p class="intro">Enter the Sales ID from your purchase confirmation to verify your order and retrieve your sign-in code.</p>
     <section class="panel" aria-labelledby="form-title">
       <form id="order-form" novalidate>
         <label for="order-number">Order number</label>
@@ -57,6 +65,14 @@
         <button type="submit" id="submit-button">Verify order</button>
       </form>
       <div id="status" class="status" role="status" aria-live="polite"></div>
+      <div id="code-box" class="code-box" aria-live="polite">
+        <div class="code-label">Your sign-in code</div>
+        <div class="code-value" id="code-value">————</div>
+        <div class="code-actions">
+          <button type="button" class="secondary" id="copy-button">Copy code</button>
+          <button type="button" id="new-search-button">New search</button>
+        </div>
+      </div>
       <div class="notice"><strong>Secure verification</strong>Your order number is used to identify your purchase. Never share your password or payment PIN here.</div>
     </section>
   </main>
@@ -66,16 +82,37 @@
     const orderInput = document.querySelector("#order-number");
     const submitButton = document.querySelector("#submit-button");
     const statusBox = document.querySelector("#status");
+    const codeBox = document.querySelector("#code-box");
+    const codeValue = document.querySelector("#code-value");
+    const copyButton = document.querySelector("#copy-button");
+    const newSearchButton = document.querySelector("#new-search-button");
 
     function showStatus(message, type) {
       statusBox.textContent = message;
       statusBox.className = "status show " + type;
+      codeBox.classList.remove("show");
+    }
+
+    function showCode(code) {
+      statusBox.className = "status";
+      codeValue.textContent = code;
+      codeBox.classList.add("show");
+    }
+
+    function resetToForm() {
+      codeBox.classList.remove("show");
+      statusBox.className = "status";
+      orderInput.value = "";
+      orderInput.focus();
+      submitButton.disabled = false;
+      submitButton.textContent = "Verify order";
     }
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const salesId = orderInput.value.trim().toUpperCase();
       statusBox.className = "status";
+      codeBox.classList.remove("show");
 
       if (!salesId) {
         showStatus("Please enter your Sales ID.", "error");
@@ -99,12 +136,35 @@
           throw new Error("Invalid verification response");
         }
 
-        showStatus(
-          result.verified
-            ? "Your order has been found. Continuing verification setup is not yet enabled."
-            : "We couldn't find that Sales ID. Check it and try again.",
-          result.verified ? "info" : "error"
-        );
+        if (!result.verified) {
+          showStatus("We couldn't find that Sales ID. Check it and try again.", "error");
+          return;
+        }
+
+        // Sales ID found — try to retrieve the code using the opaque token
+        if (result.token) {
+          submitButton.textContent = "Retrieving code…";
+          const redeemResponse = await fetch("/api/verify-order", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            cache: "no-store",
+            body: JSON.stringify({ action: "redeem", token: result.token })
+          });
+          const redeemResult = await redeemResponse.json();
+
+          if (redeemResult && redeemResult.code) {
+            showCode(redeemResult.code);
+            return;
+          }
+
+          // Token was valid but no code is available yet
+          showStatus(
+            redeemResult?.message || "Order verified. No recent sign-in code found. Please request a new code from the service and try again.",
+            "info"
+          );
+        } else {
+          showStatus("Your order has been found. Code retrieval is being prepared.", "info");
+        }
       } catch {
         showStatus("Verification is temporarily unavailable. Please try again shortly.", "error");
       } finally {
@@ -112,6 +172,21 @@
         submitButton.textContent = "Verify order";
       }
     });
+
+    copyButton.addEventListener("click", async () => {
+      const code = codeValue.textContent.replace(/\s/g, "");
+      if (!code || code.includes("—")) return;
+      try {
+        await navigator.clipboard.writeText(code);
+        copyButton.textContent = "Copied!";
+        setTimeout(() => { copyButton.textContent = "Copy code"; }, 1800);
+      } catch {
+        copyButton.textContent = "Copy failed";
+        setTimeout(() => { copyButton.textContent = "Copy code"; }, 1800);
+      }
+    });
+
+    newSearchButton.addEventListener("click", resetToForm);
 
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
       window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
