@@ -48,15 +48,12 @@
   <main>
     <div class="eyebrow">Order assistance</div>
     <h1>Sign-in Code</h1>
-    <p class="intro">Enter your Sales ID and the email address used for your purchase to verify your order.</p>
+    <p class="intro">Enter the Sales ID from your purchase confirmation to verify your order.</p>
     <section class="panel" aria-labelledby="form-title">
       <form id="order-form" novalidate>
         <label for="order-number">Order number</label>
         <input id="order-number" name="orderNumber" type="text" placeholder="e.g. JVQ1ZPN3E" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="64" required>
         <p class="hint">Enter the complete Sales ID exactly as shown in your receipt.</p>
-        <label for="account-email" style="margin-top:18px">Account email</label>
-        <input id="account-email" name="email" type="email" placeholder="you@example.com" autocomplete="email" autocapitalize="none" spellcheck="false" maxlength="254" required>
-        <p class="hint">Use the email address associated with your purchase.</p>
         <button type="submit" id="submit-button">Verify order</button>
       </form>
       <div id="status" class="status" role="status" aria-live="polite"></div>
@@ -67,7 +64,6 @@
   <script>
     const form = document.querySelector("#order-form");
     const orderInput = document.querySelector("#order-number");
-    const emailInput = document.querySelector("#account-email");
     const submitButton = document.querySelector("#submit-button");
     const statusBox = document.querySelector("#status");
 
@@ -78,20 +74,12 @@
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-
       const salesId = orderInput.value.trim().toUpperCase();
-      const email = emailInput.value.trim().toLowerCase();
-
       statusBox.className = "status";
 
       if (!salesId) {
         showStatus("Please enter your Sales ID.", "error");
         orderInput.focus();
-        return;
-      }
-      if (!email || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
-        showStatus("Please enter a valid account email.", "error");
-        emailInput.focus();
         return;
       }
 
@@ -103,9 +91,8 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           cache: "no-store",
-          body: JSON.stringify({ salesId, email })
+          body: JSON.stringify({ salesId })
         });
-
         const result = await response.json();
 
         if (!response.ok || !result || typeof result.verified !== "boolean") {
@@ -114,11 +101,11 @@
 
         showStatus(
           result.verified
-            ? "Your order details have been verified."
-            : "We couldn't verify those details. Check your Sales ID and email, then try again.",
+            ? "Your order has been found. Continuing verification setup is not yet enabled."
+            : "We couldn't find that Sales ID. Check it and try again.",
           result.verified ? "info" : "error"
         );
-      } catch (error) {
+      } catch {
         showStatus("Verification is temporarily unavailable. Please try again shortly.", "error");
       } finally {
         submitButton.disabled = false;
