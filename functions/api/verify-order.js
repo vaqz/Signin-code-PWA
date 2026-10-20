@@ -1,4 +1,4 @@
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbymWQbpg2VDIH4aEdKkM0KMigJKooqFcKvKeP-54BqO4R2DgYT56CK7KQyIyoQ_PZf0/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzWg4XeX_4Ss6HfNxhM2LdfTGGgjKdSMy1B1Anwu8hSjXQ078I2nOGGwKbdigCmDPgf/exec";
 
 export async function onRequestPost(context) {
   const request = context.request;
