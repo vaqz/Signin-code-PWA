@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#10151f">
-  <meta name="description" content="Secure order verification for Vaqz Mobiz customers.">
+  <meta name="description" content="Retrieve your sign-in code for Vaqz Mobiz.">
   <title>Sign-in Code · Vaqz Mobiz</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="data:,">
@@ -29,8 +29,6 @@
     button:focus-visible{outline:3px solid white;outline-offset:3px}
     button:disabled{opacity:.6;cursor:not-allowed}
     .hint{font-size:13px;color:var(--muted);margin:10px 0 0}
-    .notice{margin-top:18px;padding:14px;border-radius:13px;background:#202a38;border:1px solid #354257;color:#c6d0de;font-size:13px}
-    .notice strong{display:block;color:var(--text);font-size:14px;margin-bottom:3px}
     .status{display:none;margin-top:16px;padding:13px 14px;border-radius:12px;font-size:14px;overflow-wrap:anywhere}
     .status.show{display:block}.status.error{background:#351d24;color:#ffd8d3;border:1px solid #70404a}.status.info{background:#172b22;color:#d6ffe1;border:1px solid #315d42}
     .code-box{display:none;margin-top:18px;padding:18px;border-radius:14px;background:#0f1a14;border:1px solid #2a4a38;text-align:center}
@@ -56,13 +54,13 @@
   <main>
     <div class="eyebrow">Order assistance</div>
     <h1>Sign-in Code</h1>
-    <p class="intro">Enter the Sales ID from your purchase confirmation to verify your order and retrieve your sign-in code.</p>
+    <p class="intro">Enter the ORDER NUMBER from your purchase confirmation to retrieve your sign-in code.</p>
     <section class="panel" aria-labelledby="form-title">
       <form id="order-form" novalidate>
         <label for="order-number">Order number</label>
         <input id="order-number" name="orderNumber" type="text" placeholder="e.g. JVQ1ZPN3E" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="64" required>
-        <p class="hint">Enter the complete Sales ID exactly as shown in your receipt.</p>
-        <button type="submit" id="submit-button">Verify order</button>
+        <p class="hint">Enter the complete Order number exactly as shown in your receipt.</p>
+        <button type="submit" id="submit-button">Get Sign-in code</button>
       </form>
       <div id="status" class="status" role="status" aria-live="polite"></div>
       <div id="code-box" class="code-box" aria-live="polite">
@@ -73,7 +71,6 @@
           <button type="button" id="new-search-button">New search</button>
         </div>
       </div>
-      <div class="notice"><strong>Secure verification</strong>Your order number is used to identify your purchase. Never share your password or payment PIN here.</div>
     </section>
   </main>
   <footer><div class="foot-inner">Vaqz Mobiz · Secure customer support</div></footer>
@@ -105,7 +102,7 @@
       orderInput.value = "";
       orderInput.focus();
       submitButton.disabled = false;
-      submitButton.textContent = "Verify order";
+      submitButton.textContent = "Get Sign-in code";
     }
 
     form.addEventListener("submit", async (event) => {
@@ -115,13 +112,13 @@
       codeBox.classList.remove("show");
 
       if (!salesId) {
-        showStatus("Please enter your Sales ID.", "error");
+        showStatus("Please enter your Order number.", "error");
         orderInput.focus();
         return;
       }
 
       submitButton.disabled = true;
-      submitButton.textContent = "Checking order…";
+      submitButton.textContent = "Getting code…";
 
       try {
         const response = await fetch("/api/verify-order", {
@@ -137,7 +134,7 @@
         }
 
         if (!result.verified) {
-          showStatus("We couldn't find that Sales ID. Check it and try again.", "error");
+          showStatus("We couldn't find that Order number. Check it and try again.", "error");
           return;
         }
 
@@ -147,14 +144,14 @@
         }
 
         showStatus(
-          result.message || "Order verified. No recent sign-in code found. Please request a new code from the service and try again.",
+          result.message || "No recent sign-in code found. Please request a new code from the service and try again.",
           "info"
         );
       } catch {
         showStatus("Verification is temporarily unavailable. Please try again shortly.", "error");
       } finally {
         submitButton.disabled = false;
-        submitButton.textContent = "Verify order";
+        submitButton.textContent = "Get Sign-in code";
       }
     });
 
