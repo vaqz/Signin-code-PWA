@@ -1,3 +1,15 @@
 name = "signin-code-pwa"
 compatibility_date = "2026-10-19"
 pages_build_output_dir = "."
+
+# Account inventory (salesId → account email)
+[[d1_databases]]
+binding = "INVENTORY_DB"
+database_name = "vaqz-account-inventory"
+database_id = "fa8b4a9d-390f-4abf-88d8-a9ee75ec770e"
+
+# Temp mail (incoming emails + stored content)
+[[d1_databases]]
+binding = "MAIL_DB"
+database_name = "temp-mail-d1"
+database_id = "3da3f829-75e9-40c3-80c6-29db1a019e06"
