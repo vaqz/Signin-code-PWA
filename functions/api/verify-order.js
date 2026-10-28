@@ -36,12 +36,12 @@ export async function onRequestPost(context) {
 
   try {
     const inventory = await INVENTORY_DB.prepare(
-      `SELECT account_email FROM inventory WHERE UPPER(sales_id) = ? LIMIT 1`
+      `SELECT account_email, otp_url FROM inventory WHERE UPPER(sales_id) = ? LIMIT 1`
     )
       .bind(salesId)
       .first();
 
-    if (!inventory || !inventory.account_email) {
+    if (!inventory) {
       return json({
         ok: true,
         verified: false,
@@ -49,7 +49,19 @@ export async function onRequestPost(context) {
       }, 200);
     }
 
-    const email = String(inventory.account_email).trim().toLowerCase();
+    // Prefer TOTP if otp_url contains a secret
+    const totpCode = await generateTotpFromUrl(inventory.otp_url);
+    if (totpCode) {
+      return json({
+        ok: true,
+        verified: true,
+        code: totpCode,
+        message: "Code retrieved."
+      }, 200);
+    }
+
+    // Fall back to email sign-in code
+    const email = String(inventory.account_email || "").trim().toLowerCase();
     if (!email || !email.includes("@")) {
       return json({
         ok: true,
@@ -75,7 +87,6 @@ export async function onRequestPost(context) {
     let code = null;
     for (const row of results || []) {
       const combined = [row.subject, row.text_content, row.html_content].filter(Boolean).join("\n");
-      // Only attempt extraction on emails that look like sign-in code messages
       if (!looksLikeSignInCodeEmail(combined)) continue;
       code = extractBestCode(combined);
       if (code) break;
@@ -96,8 +107,83 @@ export async function onRequestPost(context) {
 }
 
 /**
- * True when the email content contains language typical of a Netflix / service sign-in code.
+ * Extract secret from otp_url and generate current 6-digit TOTP.
+ * Supports URLs like https://vmtotp.vaqzvasquez.workers.dev/?secret=BASE32SECRET
  */
+async function generateTotpFromUrl(otpUrl) {
+  if (!otpUrl || typeof otpUrl !== "string") return null;
+  const trimmed = otpUrl.trim();
+  if (!trimmed) return null;
+
+  let secret;
+  try {
+    const url = new URL(trimmed);
+    secret = url.searchParams.get("secret");
+  } catch {
+    // Not a full URL — try to treat the whole string as a secret if it looks like base32
+    if (/^[A-Z2-7]+=*$/i.test(trimmed)) secret = trimmed;
+    else return null;
+  }
+
+  if (!secret) return null;
+  secret = secret.toUpperCase().replace(/[^A-Z2-7]/g, "");
+  if (secret.length < 16) return null;
+
+  try {
+    return await generateTotp(secret);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * RFC 6238 TOTP (SHA1, 30s step, 6 digits)
+ */
+async function generateTotp(base32Secret) {
+  const key = base32ToBytes(base32Secret);
+  const counter = Math.floor(Date.now() / 1000 / 30);
+  const counterBytes = new Uint8Array(8);
+  let c = counter;
+  for (let i = 7; i >= 0; i--) {
+    counterBytes[i] = c & 0xff;
+    c = Math.floor(c / 256);
+  }
+
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    key,
+    { name: "HMAC", hash: "SHA-1" },
+    false,
+    ["sign"]
+  );
+  const hmac = new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, counterBytes));
+
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const binary =
+    ((hmac[offset] & 0x7f) << 24) |
+    ((hmac[offset + 1] & 0xff) << 16) |
+    ((hmac[offset + 2] & 0xff) << 8) |
+    (hmac[offset + 3] & 0xff);
+
+  const otp = binary % 1000000;
+  return otp.toString().padStart(6, "0");
+}
+
+function base32ToBytes(base32) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = "";
+  for (const char of base32) {
+    const val = alphabet.indexOf(char);
+    if (val === -1) continue;
+    bits += val.toString(2).padStart(5, "0");
+  }
+  const bytes = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
+    bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  }
+  return new Uint8Array(bytes);
+}
+
 function looksLikeSignInCodeEmail(text) {
   if (!text) return false;
   const lower = text.toLowerCase();
@@ -113,10 +199,6 @@ function looksLikeSignInCodeEmail(text) {
   );
 }
 
-/**
- * Prefer codes that appear near sign-in phrases. Fallback is only used when the
- * email already passed the looksLikeSignInCodeEmail check.
- */
 function extractBestCode(text) {
   if (!text) return null;
 
@@ -140,7 +222,6 @@ function extractBestCode(text) {
     }
   }
 
-  // Narrower fallback: only spaced 4/6 digit sequences (common in Netflix emails)
   const spaced = [
     /\b(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)\b/,
     /\b(\d)\s+(\d)\s+(\d)\s+(\d)\b/
