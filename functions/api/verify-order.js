@@ -1,5 +1,3 @@
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzWg4XeX_4Ss6HfNxhM2LdfTGGgjKdSMy1B1Anwu8hSjXQ078I2nOGGwKbdigCmDPgf/exec";
-
 export async function onRequestPost(context) {
   const request = context.request;
   const origin = request.headers.get("Origin");
@@ -32,38 +30,117 @@ export async function onRequestPost(context) {
     return json({ ok: false, verified: false, message: "Enter a valid Sales ID." }, 400);
   }
 
-  try {
-    const upstream = await fetch(APPS_SCRIPT_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: JSON.stringify({ salesId }),
-      redirect: "follow",
-      signal: AbortSignal.timeout(15000)
-    });
-
-    if (!upstream.ok) {
-      return json({ ok: false, verified: false, message: "Verification is temporarily unavailable." }, 502);
-    }
-
-    const result = await upstream.json();
-    if (!result || typeof result.verified !== "boolean") {
-      return json({ ok: false, verified: false, message: "Verification is temporarily unavailable." }, 502);
-    }
-
-    const response = {
-      ok: result.ok === true,
-      verified: result.verified,
-      message: result.message || (result.verified ? "Your order has been found." : "We couldn't find that Sales ID. Check it and try again.")
-    };
-
-    if (result.verified && result.code && /^\d{4,8}$/.test(result.code)) {
-      response.code = result.code;
-    }
-
-    return json(response, 200);
-  } catch {
+  const { INVENTORY_DB, MAIL_DB } = context.env;
+  if (!INVENTORY_DB || !MAIL_DB) {
     return json({ ok: false, verified: false, message: "Verification is temporarily unavailable." }, 502);
   }
+
+  try {
+    // 1. Resolve salesId → account email from inventory
+    const inventory = await INVENTORY_DB.prepare(
+      `SELECT account_email FROM inventory WHERE UPPER(sales_id) = ? LIMIT 1`
+    )
+      .bind(salesId)
+      .first();
+
+    if (!inventory || !inventory.account_email) {
+      return json({
+        ok: true,
+        verified: false,
+        message: "We couldn't find that Sales ID. Check it and try again."
+      }, 200);
+    }
+
+    const email = String(inventory.account_email).trim().toLowerCase();
+    if (!email || !email.includes("@")) {
+      return json({
+        ok: true,
+        verified: true,
+        code: null,
+        message: "No email is linked to this Sales ID."
+      }, 200);
+    }
+
+    // 2. Look for recent sign-in code emails in temp-mail (last 15 minutes)
+    const fifteenMinutesAgo = Math.floor(Date.now() / 1000) - 15 * 60;
+
+    const { results } = await MAIL_DB.prepare(
+      `SELECT subject, text_content, html_content, received_at
+       FROM emails
+       WHERE LOWER(to_address) = ?
+         AND received_at >= ?
+       ORDER BY received_at DESC
+       LIMIT 8`
+    )
+      .bind(email, fifteenMinutesAgo)
+      .all();
+
+    let code = null;
+    for (const row of results || []) {
+      const text = [row.text_content, row.html_content, row.subject].filter(Boolean).join("\n");
+      code = extractBestCode(text);
+      if (code) break;
+    }
+
+    return json({
+      ok: true,
+      verified: true,
+      code: code || null,
+      message: code
+        ? "Code retrieved."
+        : "No recent sign-in code found. Please request a new code and try again."
+    }, 200);
+  } catch (err) {
+    console.error("verify-order error:", err);
+    return json({ ok: false, verified: false, message: "Verification is temporarily unavailable." }, 502);
+  }
+}
+
+/**
+ * Port of the Apps Script extractBestCode logic.
+ * Prefers codes near Netflix-style phrases, then falls back to plain 4/6 digit codes.
+ */
+function extractBestCode(text) {
+  if (!text) return null;
+
+  const normalized = text.replace(/\s+/g, " ");
+
+  const contextPatterns = [
+    /Enter this code to sign in[:\s]*([\d\s]{4,20})/i,
+    /sign[- ]?in code[:\s]*([\d\s]{4,20})/i,
+    /your code[:\s]*([\d\s]{4,20})/i,
+    /code[:\s]*([\d\s]{4,15})/i
+  ];
+
+  for (const regex of contextPatterns) {
+    const match = normalized.match(regex);
+    if (match && match[1]) {
+      const digits = match[1].replace(/\D/g, "");
+      if ((digits.length === 4 || digits.length === 6) && !/^0+$/.test(digits)) {
+        return digits;
+      }
+    }
+  }
+
+  // Fallback: spaced or plain 4/6 digit codes
+  const fallback = [
+    /\b(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)\b/,
+    /\b(\d)\s+(\d)\s+(\d)\s+(\d)\b/,
+    /\b(\d{6})\b/,
+    /\b(\d{4})\b/
+  ];
+
+  for (const regex of fallback) {
+    const matches = text.match(regex);
+    if (matches && matches.length > 0) {
+      let candidate = matches[matches.length - 1].replace(/\s/g, "");
+      if ((candidate.length === 4 || candidate.length === 6) && !/^0+$/.test(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  return null;
 }
 
 function json(data, status = 200) {
