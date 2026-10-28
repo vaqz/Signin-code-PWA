@@ -2,7 +2,6 @@ export async function onRequestPost(context) {
   const request = context.request;
   const origin = request.headers.get("Origin");
 
-  // Only accept browser requests from this same site.
   if (origin) {
     try {
       if (new URL(origin).origin !== new URL(request.url).origin) {
@@ -36,7 +35,6 @@ export async function onRequestPost(context) {
   }
 
   try {
-    // 1. Resolve salesId → account email from inventory
     const inventory = await INVENTORY_DB.prepare(
       `SELECT account_email FROM inventory WHERE UPPER(sales_id) = ? LIMIT 1`
     )
@@ -61,7 +59,6 @@ export async function onRequestPost(context) {
       }, 200);
     }
 
-    // 2. Look for recent sign-in code emails in temp-mail (last 15 minutes)
     const fifteenMinutesAgo = Math.floor(Date.now() / 1000) - 15 * 60;
 
     const { results } = await MAIL_DB.prepare(
@@ -77,8 +74,10 @@ export async function onRequestPost(context) {
 
     let code = null;
     for (const row of results || []) {
-      const text = [row.text_content, row.html_content, row.subject].filter(Boolean).join("\n");
-      code = extractBestCode(text);
+      const combined = [row.subject, row.text_content, row.html_content].filter(Boolean).join("\n");
+      // Only attempt extraction on emails that look like sign-in code messages
+      if (!looksLikeSignInCodeEmail(combined)) continue;
+      code = extractBestCode(combined);
       if (code) break;
     }
 
@@ -97,8 +96,26 @@ export async function onRequestPost(context) {
 }
 
 /**
- * Port of the Apps Script extractBestCode logic.
- * Prefers codes near Netflix-style phrases, then falls back to plain 4/6 digit codes.
+ * True when the email content contains language typical of a Netflix / service sign-in code.
+ */
+function looksLikeSignInCodeEmail(text) {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return (
+    lower.includes("sign in") ||
+    lower.includes("sign-in") ||
+    lower.includes("signin") ||
+    lower.includes("enter this code") ||
+    lower.includes("your code") ||
+    lower.includes("verification code") ||
+    lower.includes("one-time") ||
+    lower.includes("netflix")
+  );
+}
+
+/**
+ * Prefer codes that appear near sign-in phrases. Fallback is only used when the
+ * email already passed the looksLikeSignInCodeEmail check.
  */
 function extractBestCode(text) {
   if (!text) return null;
@@ -109,6 +126,7 @@ function extractBestCode(text) {
     /Enter this code to sign in[:\s]*([\d\s]{4,20})/i,
     /sign[- ]?in code[:\s]*([\d\s]{4,20})/i,
     /your code[:\s]*([\d\s]{4,20})/i,
+    /verification code[:\s]*([\d\s]{4,20})/i,
     /code[:\s]*([\d\s]{4,15})/i
   ];
 
@@ -122,18 +140,16 @@ function extractBestCode(text) {
     }
   }
 
-  // Fallback: spaced or plain 4/6 digit codes
-  const fallback = [
+  // Narrower fallback: only spaced 4/6 digit sequences (common in Netflix emails)
+  const spaced = [
     /\b(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)\b/,
-    /\b(\d)\s+(\d)\s+(\d)\s+(\d)\b/,
-    /\b(\d{6})\b/,
-    /\b(\d{4})\b/
+    /\b(\d)\s+(\d)\s+(\d)\s+(\d)\b/
   ];
 
-  for (const regex of fallback) {
+  for (const regex of spaced) {
     const matches = text.match(regex);
     if (matches && matches.length > 0) {
-      let candidate = matches[matches.length - 1].replace(/\s/g, "");
+      const candidate = matches[matches.length - 1].replace(/\s/g, "");
       if ((candidate.length === 4 || candidate.length === 6) && !/^0+$/.test(candidate)) {
         return candidate;
       }
