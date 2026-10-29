@@ -72,16 +72,23 @@ export async function onRequestPost(context) {
     }
 
     const fifteenMinutesAgo = Math.floor(Date.now() / 1000) - 15 * 60;
+    const emailPattern = `%${email}%`;
 
+    // Match direct delivery (to_address) OR forwards that mention the original address in the body
     const { results } = await MAIL_DB.prepare(
-      `SELECT subject, text_content, html_content, received_at
+      `SELECT subject, text_content, html_content, received_at, to_address
        FROM emails
-       WHERE LOWER(to_address) = ?
-         AND received_at >= ?
+       WHERE received_at >= ?
+         AND (
+           LOWER(to_address) = ?
+           OR LOWER(COALESCE(subject, '')) LIKE ?
+           OR LOWER(COALESCE(text_content, '')) LIKE ?
+           OR LOWER(COALESCE(html_content, '')) LIKE ?
+         )
        ORDER BY received_at DESC
        LIMIT 8`
     )
-      .bind(email, fifteenMinutesAgo)
+      .bind(fifteenMinutesAgo, email, emailPattern, emailPattern, emailPattern)
       .all();
 
     let code = null;
