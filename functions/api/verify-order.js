@@ -36,7 +36,7 @@ export async function onRequestPost(context) {
 
   try {
     const inventory = await INVENTORY_DB.prepare(
-      `SELECT account_email, otp_url, expiry_date, original_start_date, term_months, legacy_status
+      `SELECT account_email, otp_url, expiry_date, original_start_date, term_months, legacy_status, renewal_decision
        FROM inventory WHERE UPPER(sales_id) = ? LIMIT 1`
     )
       .bind(salesId)
@@ -67,7 +67,11 @@ export async function onRequestPost(context) {
     const explicitlyExpired = status === "expired";
     const invalidExpiryMetadata = hasExpiryInputs && !expiryDate;
 
-    if (explicitlyExpired || invalidExpiryMetadata || (remainingDays !== null && remainingDays <= 1)) {
+    const refundSelected = String(inventory.renewal_decision || "").trim().toLowerCase() === "refund";
+
+    // A Refund · end access decision immediately disables sign-in code retrieval,
+    // regardless of the refund payment status or the account's expiry date.
+    if (refundSelected || explicitlyExpired || invalidExpiryMetadata || (remainingDays !== null && remainingDays <= 1)) {
       return json({
         ok: true,
         verified: false,
