@@ -167,7 +167,7 @@ function resolveInventoryExpiry(row) {
 }
 
 function isValidDateOnly(value) {
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const [year, month, day] = value.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
   return date.getUTCFullYear() === year &&
@@ -287,7 +287,7 @@ function looksLikeSignInCodeEmail(text) {
 function extractBestCode(text) {
   if (!text) return null;
 
-  const normalized = text.replace(/\\s+/g, " ");
+  const normalized = text.replace(/\s+/g, " ");
 
   const contextPatterns = [
     /Enter this code to sign in[:\\s]*([\\d\\s]{4,20})/i,
@@ -300,7 +300,7 @@ function extractBestCode(text) {
   for (const regex of contextPatterns) {
     const match = normalized.match(regex);
     if (match && match[1]) {
-      const digits = match[1].replace(/\\D/g, "");
+      const digits = match[1].replace(/\D/g, "");
       if ((digits.length === 4 || digits.length === 6) && !/^0+$/.test(digits)) {
         return digits;
       }
@@ -308,14 +308,14 @@ function extractBestCode(text) {
   }
 
   const spaced = [
-    /\\b(\\d)\\s+(\\d)\\s+(\\d)\\s+(\\d)\\s+(\\d)\\s+(\\d)\\b/,
-    /\\b(\\d)\\s+(\\d)\\s+(\\d)\\s+(\\d)\\b/
+    /\b(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)\b/,
+    /\b(\d)\s+(\d)\s+(\d)\s+(\d)\b/
   ];
 
   for (const regex of spaced) {
     const matches = text.match(regex);
     if (matches && matches.length > 0) {
-      const candidate = matches[matches.length - 1].replace(/\\s/g, "");
+      const candidate = matches[matches.length - 1].replace(/\s/g, "");
       if ((candidate.length === 4 || candidate.length === 6) && !/^0+$/.test(candidate)) {
         return candidate;
       }
