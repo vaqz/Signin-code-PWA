@@ -86,7 +86,8 @@ export async function onRequestPost(context) {
       }, 200);
     }
 
-    // Fall back to email sign-in code
+    // Fall back to email sign-in code. Only emails explicitly classified
+    // as public by Temp Mail visibility rules may be considered.
     const email = String(inventory.account_email || "").trim().toLowerCase();
     if (!email || !email.includes("@")) {
       return json({
@@ -100,11 +101,13 @@ export async function onRequestPost(context) {
     const fifteenMinutesAgo = Math.floor(Date.now() / 1000) - 15 * 60;
     const emailPattern = `%${email}%`;
 
-    // Match direct delivery (to_address) OR forwards that mention the original address in the body
+    // Match direct delivery (to_address) OR forwards that mention the original
+    // address in the body, but never include private emails.
     const { results } = await MAIL_DB.prepare(
       `SELECT subject, text_content, html_content, received_at, to_address
        FROM emails
-       WHERE received_at >= ?
+       WHERE is_public = 1
+         AND received_at >= ?
          AND (
            LOWER(to_address) = ?
            OR LOWER(COALESCE(subject, '')) LIKE ?
@@ -164,7 +167,7 @@ function resolveInventoryExpiry(row) {
 }
 
 function isValidDateOnly(value) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;
   const [year, month, day] = value.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
   return date.getUTCFullYear() === year &&
@@ -284,20 +287,20 @@ function looksLikeSignInCodeEmail(text) {
 function extractBestCode(text) {
   if (!text) return null;
 
-  const normalized = text.replace(/\s+/g, " ");
+  const normalized = text.replace(/\\s+/g, " ");
 
   const contextPatterns = [
-    /Enter this code to sign in[:\s]*([\d\s]{4,20})/i,
-    /sign[- ]?in code[:\s]*([\d\s]{4,20})/i,
-    /your code[:\s]*([\d\s]{4,20})/i,
-    /verification code[:\s]*([\d\s]{4,20})/i,
-    /code[:\s]*([\d\s]{4,15})/i
+    /Enter this code to sign in[:\\s]*([\\d\\s]{4,20})/i,
+    /sign[- ]?in code[:\\s]*([\\d\\s]{4,20})/i,
+    /your code[:\\s]*([\\d\\s]{4,20})/i,
+    /verification code[:\\s]*([\\d\\s]{4,20})/i,
+    /code[:\\s]*([\\d\\s]{4,15})/i
   ];
 
   for (const regex of contextPatterns) {
     const match = normalized.match(regex);
     if (match && match[1]) {
-      const digits = match[1].replace(/\D/g, "");
+      const digits = match[1].replace(/\\D/g, "");
       if ((digits.length === 4 || digits.length === 6) && !/^0+$/.test(digits)) {
         return digits;
       }
@@ -305,14 +308,14 @@ function extractBestCode(text) {
   }
 
   const spaced = [
-    /\b(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)\b/,
-    /\b(\d)\s+(\d)\s+(\d)\s+(\d)\b/
+    /\\b(\\d)\\s+(\\d)\\s+(\\d)\\s+(\\d)\\s+(\\d)\\s+(\\d)\\b/,
+    /\\b(\\d)\\s+(\\d)\\s+(\\d)\\s+(\\d)\\b/
   ];
 
   for (const regex of spaced) {
     const matches = text.match(regex);
     if (matches && matches.length > 0) {
-      const candidate = matches[matches.length - 1].replace(/\s/g, "");
+      const candidate = matches[matches.length - 1].replace(/\\s/g, "");
       if ((candidate.length === 4 || candidate.length === 6) && !/^0+$/.test(candidate)) {
         return candidate;
       }
