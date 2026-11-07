@@ -290,11 +290,11 @@ function extractBestCode(text) {
   const normalized = text.replace(/\s+/g, " ");
 
   const contextPatterns = [
-    /Enter this code to sign in[:\\s]*([\\d\\s]{4,20})/i,
-    /sign[- ]?in code[:\\s]*([\\d\\s]{4,20})/i,
-    /your code[:\\s]*([\\d\\s]{4,20})/i,
-    /verification code[:\\s]*([\\d\\s]{4,20})/i,
-    /code[:\\s]*([\\d\\s]{4,15})/i
+    /Enter this code to sign in[:\s]*([\d\s]{4,20})/i,
+    /sign[- ]?in code[:\s]*([\d\s]{4,20})/i,
+    /your code[:\s]*([\d\s]{4,20})/i,
+    /verification code[:\s]*([\d\s]{4,20})/i,
+    /code[:\s]*([\d\s]{4,15})/i
   ];
 
   for (const regex of contextPatterns) {
