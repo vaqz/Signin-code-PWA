@@ -36,16 +36,34 @@ export async function onRequestPost(context) {
 
   try {
     const inventory = await INVENTORY_DB.prepare(
-      `SELECT account_email, otp_url FROM inventory WHERE UPPER(sales_id) = ? LIMIT 1`
+      `SELECT account_email, otp_url, expiry_date, original_start_date, term_months
+       FROM inventory WHERE UPPER(sales_id) = ? LIMIT 1`
     )
       .bind(salesId)
       .first();
+
+    // Use the same public response for unknown and ineligible orders so this
+    // endpoint does not disclose whether a Sales ID exists in the inventory.
+    const unavailableMessage =
+      "We couldn't verify that Order number. Check it and try again. If you believe it should be active, contact support.";
 
     if (!inventory) {
       return json({
         ok: true,
         verified: false,
-        message: "We couldn't find that Sales ID. Check it and try again."
+        message: unavailableMessage
+      }, 200);
+    }
+
+    // Enforce the subscription cutoff on the server before generating a TOTP
+    // or searching the mailbox. The expiry date is interpreted in Asia/Manila.
+    const expiryDate = resolveInventoryExpiry(inventory);
+    const remainingDays = expiryDate ? daysUntilExpiryInManila(expiryDate) : null;
+    if (remainingDays === null || remainingDays <= 1) {
+      return json({
+        ok: true,
+        verified: false,
+        message: unavailableMessage
       }, 200);
     }
 
@@ -111,6 +129,55 @@ export async function onRequestPost(context) {
     console.error("verify-order error:", err);
     return json({ ok: false, verified: false, message: "Verification is temporarily unavailable." }, 502);
   }
+}
+
+/**
+ * Return a validated YYYY-MM-DD expiry date. Older rows without a stored
+ * expiry can be resolved from original_start_date + cumulative term_months.
+ */
+function resolveInventoryExpiry(row) {
+  const stored = String(row?.expiry_date || "").trim().slice(0, 10);
+  if (stored) return isValidDateOnly(stored) ? stored : null;
+
+  const start = String(row?.original_start_date || "").trim().slice(0, 10);
+  const term = Number(row?.term_months);
+  if (!isValidDateOnly(start) || !Number.isInteger(term) || term < 1) return null;
+
+  const [year, month, day] = start.split("-").map(Number);
+  const monthIndex = year * 12 + (month - 1) + term;
+  const targetYear = Math.floor(monthIndex / 12);
+  const targetMonthIndex = monthIndex % 12;
+  const lastDay = new Date(Date.UTC(targetYear, targetMonthIndex + 1, 0)).getUTCDate();
+  return [
+    String(targetYear).padStart(4, "0"),
+    String(targetMonthIndex + 1).padStart(2, "0"),
+    String(Math.min(day, lastDay)).padStart(2, "0")
+  ].join("-");
+}
+
+function isValidDateOnly(value) {
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day;
+}
+
+function daysUntilExpiryInManila(expiryDate) {
+  if (!isValidDateOnly(expiryDate)) return null;
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  const today = Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day));
+  const [year, month, day] = expiryDate.split("-").map(Number);
+  const expiry = Date.UTC(year, month - 1, day);
+  return Math.round((expiry - today) / 86400000);
 }
 
 /**
