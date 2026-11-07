@@ -36,16 +36,15 @@ export async function onRequestPost(context) {
 
   try {
     const inventory = await INVENTORY_DB.prepare(
-      `SELECT account_email, otp_url, expiry_date, original_start_date, term_months
+      `SELECT account_email, otp_url, expiry_date, original_start_date, term_months, legacy_status
        FROM inventory WHERE UPPER(sales_id) = ? LIMIT 1`
     )
       .bind(salesId)
       .first();
 
-    // Use the same public response for unknown and ineligible orders so this
-    // endpoint does not disclose whether a Sales ID exists in the inventory.
+    // Keep unknown IDs and blocked IDs indistinguishable to customers.
     const unavailableMessage =
-      "We couldn't verify that Order number. Check it and try again. If you believe it should be active, contact support.";
+      "This Order number is unavailable. If your subscription is active, please contact support.";
 
     if (!inventory) {
       return json({
@@ -55,11 +54,20 @@ export async function onRequestPost(context) {
       }, 200);
     }
 
-    // Enforce the subscription cutoff on the server before generating a TOTP
-    // or searching the mailbox. The expiry date is interpreted in Asia/Manila.
+    // Enforce the cutoff when a valid expiry date is available. Some older,
+    // migrated active records have no expiry metadata; do not disable those
+    // customers solely because the legacy date fields are blank.
     const expiryDate = resolveInventoryExpiry(inventory);
+    const rawExpiry = String(inventory.expiry_date || "").trim();
+    const rawStart = String(inventory.original_start_date || "").trim();
+    const rawTerm = inventory.term_months;
+    const hasExpiryInputs = Boolean(rawExpiry || rawStart || (rawTerm !== null && rawTerm !== undefined && String(rawTerm) !== "" && Number(rawTerm) > 0));
     const remainingDays = expiryDate ? daysUntilExpiryInManila(expiryDate) : null;
-    if (remainingDays === null || remainingDays <= 1) {
+    const status = String(inventory.legacy_status || "").trim().toLowerCase();
+    const explicitlyExpired = status === "expired";
+    const invalidExpiryMetadata = hasExpiryInputs && !expiryDate;
+
+    if (explicitlyExpired || invalidExpiryMetadata || (remainingDays !== null && remainingDays <= 1)) {
       return json({
         ok: true,
         verified: false,
