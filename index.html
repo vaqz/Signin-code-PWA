@@ -134,7 +134,10 @@
         }
 
         if (!result.verified) {
-          showStatus("We couldn't find that Order number. Check it and try again.", "error");
+          showStatus(
+            result.message || "This Order number is unavailable. If your subscription is active, please contact support.",
+            "error"
+          );
           return;
         }
 
