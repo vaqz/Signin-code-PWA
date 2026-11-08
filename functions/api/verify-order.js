@@ -156,6 +156,32 @@ export async function onRequestPost(context) {
       if (code) break;
     }
 
+    // Additive fallback: only run when all existing service-specific rules fail.
+    // The SQL result set is already restricted to is_public = 1 and the order-linked
+    // email (direct recipient or linked address found in a forwarded message).
+    if (!code) {
+      for (const row of results || []) {
+        const sender = String(row.from_address || "").trim().toLowerCase();
+        const subject = String(row.subject || "").trim().toLowerCase();
+        const receivedAt = Number(row.received_at || 0);
+        const isLoklokOtp =
+          sender === "notify@shanxixi.com" &&
+          subject.includes("otp for email verification");
+
+        // Preserve Loklok's explicit five-minute expiry in the fallback too.
+        if (isLoklokOtp && receivedAt < fiveMinutesAgo) continue;
+
+        const combined = [
+          row.subject,
+          row.text_content,
+          stripHtml(row.html_content)
+        ].filter(Boolean).join("\n");
+
+        code = extractUniversalCode(combined);
+        if (code) break;
+      }
+    }
+
     return json({
       ok: true,
       verified: true,
@@ -322,6 +348,39 @@ function extractLoklokCode(text) {
   if (!match) return null;
   const candidate = match[1];
   return /^0+$/.test(candidate) ? null : candidate;
+}
+
+/**
+ * Broad, service-agnostic OTP fallback.
+ * Requires an authentication/verification context near the number; it never
+ * returns arbitrary four-to-eight digit numbers from an email.
+ */
+function extractUniversalCode(text) {
+  if (!text) return null;
+  const normalized = stripHtml(text)
+    .replace(/[\u00a0\u200b-\u200d\ufeff]/g, " ")
+    .replace(/\s+/g, " ");
+
+  const patterns = [
+    /(?:otp|one[- ]time(?: password| code)?|verification(?:\s+code)?|security(?:\s+code)?|login(?:\s+code)?|sign[- ]?in(?:\s+code)?|authentication(?:\s+code)?|passcode|code)\D{0,45}(\d{4,8})(?!\d)/i,
+    /(\d{4,8})(?!\d)\D{0,35}(?:is your|as your|is the|as the)?\s*(?:otp|one[- ]time|verification|security|login|sign[- ]?in|authentication)\s*(?:password|code)?/i
+  ];
+
+  for (const regex of patterns) {
+    const match = normalized.match(regex);
+    if (!match || !match[1]) continue;
+    const candidate = match[1];
+    if (/^0+$/.test(candidate)) continue;
+
+    // Reject obvious date/time fragments and numbers embedded in longer IDs.
+    const index = match.index ?? 0;
+    const before = normalized.slice(Math.max(0, index - 18), index);
+    if (/\b(?:20\d{2}[-/]\d{1,2}[-/]\d{1,2}|(?:order|ticket|reference|transaction)\s*(?:no\.?|number|#)?)\s*$/i.test(before)) {
+      continue;
+    }
+    return candidate;
+  }
+  return null;
 }
 
 function looksLikeSignInCodeEmail(text) {
