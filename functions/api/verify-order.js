@@ -106,12 +106,12 @@ export async function onRequestPost(context) {
     // shorter five-minute validity window to its specific OTP messages.
     const fifteenMinutesAgo = Math.floor(Date.now() / 1000) - 15 * 60;
     const fiveMinutesAgo = Math.floor(Date.now() / 1000) - 5 * 60;
-    const emailPattern = \`%\${email}%\`;
+    const emailPattern = `%\${email}%`;
 
     // Match direct delivery (to_address) OR forwards that mention the original
     // address in the body, but never include private emails.
     const { results } = await MAIL_DB.prepare(
-      \`SELECT from_address, subject, text_content, html_content, received_at, to_address
+      `SELECT from_address, subject, text_content, html_content, received_at, to_address
        FROM emails
        WHERE is_public = 1
          AND received_at >= ?
@@ -122,7 +122,7 @@ export async function onRequestPost(context) {
            OR LOWER(COALESCE(html_content, '')) LIKE ?
          )
        ORDER BY received_at DESC
-       LIMIT 12\`
+       LIMIT 12`
     )
       .bind(fifteenMinutesAgo, email, emailPattern, emailPattern, emailPattern)
       .all();
