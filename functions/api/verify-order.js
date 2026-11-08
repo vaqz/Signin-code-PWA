@@ -102,13 +102,16 @@ export async function onRequestPost(context) {
       }, 200);
     }
 
+    // Search a wider recent window for existing services, then apply Loklok's
+    // shorter five-minute validity window to its specific OTP messages.
     const fifteenMinutesAgo = Math.floor(Date.now() / 1000) - 15 * 60;
-    const emailPattern = `%${email}%`;
+    const fiveMinutesAgo = Math.floor(Date.now() / 1000) - 5 * 60;
+    const emailPattern = \`%\${email}%\`;
 
     // Match direct delivery (to_address) OR forwards that mention the original
     // address in the body, but never include private emails.
     const { results } = await MAIL_DB.prepare(
-      `SELECT subject, text_content, html_content, received_at, to_address
+      \`SELECT from_address, subject, text_content, html_content, received_at, to_address
        FROM emails
        WHERE is_public = 1
          AND received_at >= ?
@@ -119,16 +122,37 @@ export async function onRequestPost(context) {
            OR LOWER(COALESCE(html_content, '')) LIKE ?
          )
        ORDER BY received_at DESC
-       LIMIT 8`
+       LIMIT 12\`
     )
       .bind(fifteenMinutesAgo, email, emailPattern, emailPattern, emailPattern)
       .all();
 
     let code = null;
     for (const row of results || []) {
-      const combined = [row.subject, row.text_content, row.html_content].filter(Boolean).join("\n");
-      if (!looksLikeSignInCodeEmail(combined)) continue;
-      code = extractBestCode(combined);
+      const sender = String(row.from_address || "").trim().toLowerCase();
+      const subject = String(row.subject || "").trim().toLowerCase();
+      const receivedAt = Number(row.received_at || 0);
+      const isLoklokOtp =
+        sender === "notify@shanxixi.com" &&
+        subject.includes("otp for email verification");
+
+      // Loklok OTPs expire after five minutes. Do not fall through to generic
+      // extraction for an old Loklok message, even if it remains in the mailbox.
+      if (isLoklokOtp && receivedAt < fiveMinutesAgo) continue;
+
+      const combined = [
+        row.subject,
+        row.text_content,
+        stripHtml(row.html_content)
+      ].filter(Boolean).join("\n");
+
+      if (isLoklokOtp) {
+        code = extractLoklokCode(combined);
+      } else {
+        if (!looksLikeSignInCodeEmail(combined)) continue;
+        code = extractBestCode(combined);
+      }
+
       if (code) break;
     }
 
@@ -271,6 +295,33 @@ function base32ToBytes(base32) {
     bytes.push(parseInt(bits.slice(i, i + 8), 2));
   }
   return new Uint8Array(bytes);
+}
+
+function stripHtml(value) {
+  return String(value || "")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractLoklokCode(text) {
+  if (!text) return null;
+  const normalized = stripHtml(text).replace(/\s+/g, " ");
+  const match = normalized.match(
+    /verification\s+code\s+(?:on|for)\s+loklok\s*[:：-]?\s*(?:is\s*)?(\d{4,6})/i
+  );
+  if (!match) return null;
+  const candidate = match[1];
+  return /^0+$/.test(candidate) ? null : candidate;
 }
 
 function looksLikeSignInCodeEmail(text) {
