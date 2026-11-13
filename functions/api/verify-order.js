@@ -136,7 +136,7 @@ export async function onRequestPost(context) {
        ORDER BY received_at DESC
        LIMIT 12`
     )
-      .bind(fifteenMinutesAgo, email, emailPattern, emailPattern, emailPattern, Number(inventory.is_vip) === 1 ? 1 : 0, email)
+      .bind(fifteenMinutesAgo, email, emailPattern, emailPattern, emailPattern, isVipInventoryRecord(inventory.is_vip) ? 1 : 0, email)
       .all();
 
     let code = null;
@@ -158,9 +158,13 @@ export async function onRequestPost(context) {
         stripHtml(row.html_content)
       ].filter(Boolean).join("\n");
 
-      if (isLoklokOtp) {
+      // Disney+ places its six-digit passcode well below the introductory
+      // phrase, after explanatory and expiry text. Handle its known template
+      // before the shorter generic OTP extractors.
+      code = extractDisneyPlusCode(combined, sender, subject);
+      if (!code && isLoklokOtp) {
         code = extractLoklokCode(combined);
-      } else {
+      } else if (!code) {
         if (!looksLikeSignInCodeEmail(combined)) continue;
         code = extractBestCode(combined);
       }
@@ -189,7 +193,7 @@ export async function onRequestPost(context) {
           stripHtml(row.html_content)
         ].filter(Boolean).join("\n");
 
-        code = extractUniversalCode(combined);
+        code = extractDisneyPlusCode(combined, sender, subject) || extractUniversalCode(combined);
         if (code) break;
       }
     }
@@ -360,6 +364,36 @@ function extractLoklokCode(text) {
   if (!match) return null;
   const candidate = match[1];
   return /^0+$/.test(candidate) ? null : candidate;
+}
+
+/**
+ * Disney+ places the passcode after a longer explanatory paragraph, so a
+ * short-distance generic OTP pattern can miss it. Restrict this extractor
+ * to Disney+ messages and a six-digit value following the known template.
+ */
+function extractDisneyPlusCode(text, sender = "", subject = "") {
+  if (!text) return null;
+  const isDisneyMessage =
+    String(sender).toLowerCase().includes("disneyplus") ||
+    /one[- ]time\s+passcode\s+for\s+disney\+/i.test(String(subject));
+  if (!isDisneyMessage) return null;
+
+  const normalized = stripHtml(text)
+    .replace(/[\u00a0\u200b-\u200d\ufeff]/g, " ")
+    .replace(/\s+/g, " ");
+  const match = normalized.match(
+    /one[- ]time\s+passcode\s+for\s+disney\+[\s\S]{0,500}?\b(\d{6})\b/i
+  );
+  if (!match || /^0+$/.test(match[1])) return null;
+  return match[1];
+}
+
+/**
+ * Treat the supported database representations of the VIP flag consistently.
+ */
+function isVipInventoryRecord(value) {
+  return value === true || value === 1 ||
+    ["1", "true", "yes", "vip"].includes(String(value ?? "").trim().toLowerCase());
 }
 
 /**
