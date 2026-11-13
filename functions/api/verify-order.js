@@ -36,8 +36,8 @@ export async function onRequestPost(context) {
 
   try {
     const inventory = await INVENTORY_DB.prepare(
-      `SELECT account_email, otp_url, expiry_date, original_start_date, term_months, legacy_status, renewal_decision
-       FROM inventory WHERE UPPER(sales_id) = ? LIMIT 1`
+      `SELECT account_email, otp_url, expiry_date, original_start_date, term_months, legacy_status, renewal_decision, is_vip
+       FROM inventory WHERE sales_id = ? LIMIT 1`
     )
       .bind(salesId)
       .first();
@@ -90,8 +90,10 @@ export async function onRequestPost(context) {
       }, 200);
     }
 
-    // Fall back to email sign-in code. Only emails explicitly classified
-    // as public by Temp Mail visibility rules may be considered.
+    // Fall back to email sign-in code. Public emails retain the existing
+    // matching rules for every customer. VIP records may additionally retrieve
+    // a private email only when it was delivered directly to this exact
+    // inventory record's linked account_email.
     const email = String(inventory.account_email || "").trim().toLowerCase();
     if (!email || !email.includes("@")) {
       return json({
@@ -108,23 +110,33 @@ export async function onRequestPost(context) {
     const fiveMinutesAgo = Math.floor(Date.now() / 1000) - 5 * 60;
     const emailPattern = `%${email}%`;
 
-    // Match direct delivery (to_address) OR forwards that mention the original
-    // address in the body, but never include private emails.
+    // Public messages retain direct-recipient and forwarded-address matching.
+    // Private messages are considered only for VIPs and only on exact direct
+    // recipient match, preventing access to unrelated private mailbox content.
     const { results } = await MAIL_DB.prepare(
       `SELECT from_address, subject, text_content, html_content, received_at, to_address
        FROM emails
-       WHERE is_public = 1
-         AND received_at >= ?
+       WHERE received_at >= ?
          AND (
-           LOWER(to_address) = ?
-           OR LOWER(COALESCE(subject, '')) LIKE ?
-           OR LOWER(COALESCE(text_content, '')) LIKE ?
-           OR LOWER(COALESCE(html_content, '')) LIKE ?
+           (
+             is_public = 1
+             AND (
+               LOWER(to_address) = ?
+               OR LOWER(COALESCE(subject, '')) LIKE ?
+               OR LOWER(COALESCE(text_content, '')) LIKE ?
+               OR LOWER(COALESCE(html_content, '')) LIKE ?
+             )
+           )
+           OR (
+             ? = 1
+             AND is_public = 0
+             AND LOWER(to_address) = ?
+           )
          )
        ORDER BY received_at DESC
        LIMIT 12`
     )
-      .bind(fifteenMinutesAgo, email, emailPattern, emailPattern, emailPattern)
+      .bind(fifteenMinutesAgo, email, emailPattern, emailPattern, emailPattern, Number(inventory.is_vip) === 1 ? 1 : 0, email)
       .all();
 
     let code = null;
@@ -157,8 +169,8 @@ export async function onRequestPost(context) {
     }
 
     // Additive fallback: only run when all existing service-specific rules fail.
-    // The SQL result set is already restricted to is_public = 1 and the order-linked
-    // email (direct recipient or linked address found in a forwarded message).
+    // The SQL result set contains public messages matching the linked address,
+    // plus private messages delivered directly to the linked address for VIPs.
     if (!code) {
       for (const row of results || []) {
         const sender = String(row.from_address || "").trim().toLowerCase();
