@@ -110,8 +110,9 @@ export async function onRequestPost(context) {
     const fiveMinutesAgo = Math.floor(Date.now() / 1000) - 5 * 60;
     const emailPattern = `%${email}%`;
 
-    // Match direct delivery (to_address) OR forwards that mention the original
-    // address in the body, but never include private emails.
+    // Public messages retain direct-recipient and forwarded-address matching.
+    // Private messages are considered only for VIPs and only on exact direct
+    // recipient match, preventing access to unrelated private mailbox content.
     const { results } = await MAIL_DB.prepare(
       `SELECT from_address, subject, text_content, html_content, received_at, to_address
        FROM emails
