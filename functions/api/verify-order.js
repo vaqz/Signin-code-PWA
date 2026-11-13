@@ -36,8 +36,9 @@ export async function onRequestPost(context) {
 
   try {
     const inventory = await INVENTORY_DB.prepare(
-      `SELECT account_email, otp_url, expiry_date, original_start_date, term_months, legacy_status, renewal_decision, is_vip
-       FROM inventory WHERE sales_id = ? LIMIT 1`
+      `SELECT i.account_email, i.otp_url, i.expiry_date, i.original_start_date, i.term_months, i.legacy_status, i.renewal_decision, i.is_vip, cp.is_vip customer_is_vip
+       FROM inventory i LEFT JOIN customer_profiles cp ON cp.id = i.customer_profile_id
+       WHERE i.sales_id = ? LIMIT 1`
     )
       .bind(salesId)
       .first();
@@ -136,7 +137,7 @@ export async function onRequestPost(context) {
        ORDER BY received_at DESC
        LIMIT 12`
     )
-      .bind(fifteenMinutesAgo, email, emailPattern, emailPattern, emailPattern, isVipInventoryRecord(inventory.is_vip) ? 1 : 0, email)
+      .bind(fifteenMinutesAgo, email, emailPattern, emailPattern, emailPattern, (isVipInventoryRecord(inventory.is_vip) || isVipInventoryRecord(inventory.customer_is_vip)) ? 1 : 0, email)
       .all();
 
     let code = null;
